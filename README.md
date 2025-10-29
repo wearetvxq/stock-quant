@@ -1,36 +1,39 @@
-# stock-quant 本地量化
-## 环境依赖安装
+[English](./README.md) | [简体中文](./README_zh-CN.md)
+
+---
+# stock-quant Local Quantization
+## Environment Dependencies Installation
 - Python3 [官网](https://www.python.org/downloads/macos/)
 ```
-MacOS:官网下载python3安装包，直接安装即可，也可以配置多个版本的python3环境，支持自由切换，
-切换方式查看环境初始化部分
+MacOS: Download the Python3 installation package from the official website and install directly. You can also configure multiple Python3 environments to support free switching.
+For switching methods, see the Environment Initialization section.
 ```
 
 ## 环境初始化
-- Python3.13（推荐）
+- Python3.13（Recommended）
 ```
 python3.13 -m venv venv13 
 source venv13/bin/activate
 pip install -r requirements-13.txt
-
 ```
-- Python3.7（暂未测试）
+
+- Python3.7（Not yet tested）
 ```
 python3.7 -m venv venv7 
 source venv7/bin/activate
 pip install -r requirements-7.txt
 ```
-- Python环境切换
+- Python Environment Switching
 ```
 - deactivate
 ```
 
-## 快速开始
-### 1. 历史k线数据准备
+## Quick Start
+### 1. Historical K-line Data Preparation
 ```
-运行core/stock/manager_xxxx，获取k线数据
+Run core/stock/manager_xxxx to obtain K-line data
 ```
-### 2. 回测运行
+### 2. Backtest Execution
 ```
 from common.logger import create_log
 from core.quant.quant_manage import run_backtest_enhanced_volume_strategy
@@ -39,24 +42,31 @@ from settings import stock_data_root
 logger = create_log('test_strategy')
 
 if __name__ == "__main__":
-    # 设置csv路径
+    # Set CSV path
     kline_csv_path = stock_data_root / "futu/HK.00700_腾讯控股_20210104_20250127.csv"
-    # 设置初始资金
+    # Set initial capital
     init_cash = 5000000
-    # 启动回测
+    # Start backtest
     run_backtest_enhanced_volume_strategy(kline_csv_path,init_cash)
 ```
-### 3. 回测结果分析
+### 3. Backtest Result Analysis
 ```
-回测日志会输出到logs目录下
-回测图表会输出到html目录下（历史k线、策略触发信号、策略交易记录、持仓记录、资金记录）
+Backtest logs will be output to the logs directory
+
+Backtest charts will be output to the html directory (historical K-line, strategy trigger signals, 
+strategy trading records, position records, fund records)
 ```
 ![demo_result](./resource/img/result/demo_result_tencent_stock.png)
-### 4. 策略参数调整
+### 4. Strategy Parameter Adjustment
 ```
-调整策略信号参数（只标记交易信号，不交易）：settings文件中修改交易策略相关参数
-调整策略买卖参数（根据交易信号执行交易）：settings文件中修改交易佣金相关参数
-调整初始本金：settings文件中修改交易本金参数
+Adjust strategy signal parameters (only mark trading signals, no trading): Modify trading strategy-related 
+parameters in the settings file
+
+Adjust strategy buying and selling parameters (execute trades based on trading signals): Modify trading 
+commission-related parameters in the settings file
+
+Adjust initial principal: Modify trading principal parameters in the settings file
 ```
 
-注：目前策略只有一个，对应futu中指标广场TREND策略
+Disclaimer: The strategy is for learning and research purposes only. It is not recommended for use 
+in real trading. We do not assume any trading risks, and all consequences are at your own risk.
