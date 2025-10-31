@@ -1,34 +1,7 @@
-import datetime
-
 import numpy as np
 import backtrader as bt
-import pandas as pd
 
-
-class SignalRecordManager:
-    def __init__(self):
-        self.signal_records = []
-
-    def add_signal_record(self, date, signal_type, signal_description):
-        self.signal_records.append(SignalRecord(date, signal_type, signal_description))
-
-    def transform_to_dataframe(self):
-        return pd.DataFrame([record.__dict__ for record in self.signal_records])
-
-class SignalRecord:
-    def __init__(self, date, signal_type, signal_description):
-        if type(date) is datetime.date:
-            # 将datetime.date转换为pandas Timestamp
-            self.date = pd.Timestamp(date)
-            # self.date = date.strftime('%Y-%m-%d')
-        elif type(date) is str:
-            # 将字符串转换为pandas Timestamp
-            self.date = pd.Timestamp(date)
-            # self.date = date
-        else:
-            raise ValueError('date must be datetime.date or str')
-        self.signal_type = signal_type
-        self.signal_description = signal_description
+from core.strategy.indicator.common import SignalRecordManager
 
 
 class EnhancedVolumeIndicator(bt.Indicator):
@@ -189,10 +162,10 @@ class EnhancedVolumeIndicator(bt.Indicator):
         if main_sell:
             self.lines.main_sell_signal[0] = self.data.high[0] * 1.05  # 在HIGH * 1.05的位置显示
             self.signal_record_manager.add_signal_record(self.data.datetime.date(), 'normal_sell', '空')
-
+        # TODO DEBUG不包含RSI指标，暂时不使用RSI，信号更多
         # enhanced_buy = main_buy and ((boll_buy_cond or boll_confirm_buy)) and kdj_buy_cond
         # enhanced_sell = main_sell and ((boll_sell_cond or boll_confirm_sell)) and kdj_sell_cond
-        # TODO DEBUG包含RSI指标，暂时不使用RSI，RSI过滤掉了很多信号指标
+        # 包含RSI指标，RSI过滤掉了很多信号指标
         enhanced_buy = main_buy and ((rsi_oversold or rsi_buy_condition) and (boll_buy_cond or boll_confirm_buy)) and kdj_buy_cond
         enhanced_sell = main_sell and ((rsi_overbought or rsi_sell_condition) and (boll_sell_cond or boll_confirm_sell)) and kdj_sell_cond
         # 设置增强信号值 - 按照用户要求的位置
@@ -203,23 +176,6 @@ class EnhancedVolumeIndicator(bt.Indicator):
         if enhanced_sell:
             self.lines.enhanced_sell_signal[0] = self.data.high[0] * 1.08  # 在HIGH * 1.08的位置显示
             self.signal_record_manager.add_signal_record(self.data.datetime.date(), 'strong_sell', '强空')
-
-
-
-# 自定义安全的数据馈送类
-class SafePandasData(bt.feeds.PandasData):
-    """增强的数据馈送，添加额外的安全检查"""
-
-    def start(self):
-        super(SafePandasData, self).start()
-        # 确保数据完整性
-        if hasattr(self.p.dataname, 'isna'):
-            # 检查并处理NaN值
-            na_count = self.p.dataname.isna().sum().sum()
-            if na_count > 0:
-                print(f"警告: 数据中包含 {na_count} 个NaN值，已自动处理")
-                # 填充NaN值
-                self.p.dataname = self.p.dataname.fillna(method='ffill').fillna(method='bfill')
 
 
 # if __name__ == '__main__':
