@@ -69,9 +69,9 @@ def filter_valid_dates(df, records):
 
     return valid_records
 
-def calculate_holdings(df_continuous, valid_trades, initial_capital=1000000):
+def calculate_holdings(df_continuous, valid_trades, initial_capital):
     """
-    计算持仓量变化和总资产变化
+    计算持仓量变化、总资产、持仓成本变化
 
     参数:
         df_continuous: 连续日期的股票数据
@@ -79,10 +79,11 @@ def calculate_holdings(df_continuous, valid_trades, initial_capital=1000000):
         initial_capital: 初始资金
 
     返回:
-        包含持仓量和总资产的DataFrame
+        包含持仓量和总资产和持仓成本的DataFrame
     """
     holdings_data = pd.DataFrame(index=df_continuous.index)
-    holdings_data['holdings'] = 0
+    holdings_data['holdings'] = 0   # 持仓量
+    holdings_data['adjusted_cost'] = 0.0  # 持仓成本
 
     # 检查valid_trades是否为空或不包含'date'列
     if valid_trades is None or valid_trades.empty or 'date' not in valid_trades.columns:
@@ -91,13 +92,17 @@ def calculate_holdings(df_continuous, valid_trades, initial_capital=1000000):
         return holdings_data
 
     # 初始化持仓量和资金
-    total_holdings = 0
-    capital = initial_capital
+    total_holdings = 0  # 当前持仓量
+    capital = initial_capital   # 剩余资金
     holdings_value = 0
+    total_cost = 0.0  # 总持仓成本
+    adjusted_cost = 0.0    # 持仓成本
 
     # 计算持仓量变化和总资产变化
     holdings_history = []
     asset_history = []
+    adjusted_cost_history = []
+
 
     for date in df_continuous.index:
         # 检查该日期是否有交易
@@ -105,23 +110,38 @@ def calculate_holdings(df_continuous, valid_trades, initial_capital=1000000):
         for _, trade in day_trades.iterrows():
             if trade['action'] == 'B':
                 # 买入，持仓量增加
-                total_holdings += trade['shares']
-                # 从资金中扣除买入金额
                 if date in df_continuous.index.dropna():
-                    buy_price = df_continuous.loc[date, 'close']
-                    capital -= trade['shares'] * buy_price
+                    buy_price = trade['price']
+                    buy_size = trade['size']
+                    commission = trade['commission']
+                    current_cost = buy_size * buy_price + commission
+                    total_cost += current_cost
+                    capital -= current_cost
+                    total_holdings += buy_size
+                    adjusted_cost = total_cost / total_holdings
             elif trade['action'] == 'S':
                 # 卖出，持仓量减少
-                total_holdings -= trade['shares']
-                # 资金增加卖出金额
                 if date in df_continuous.index.dropna():
-                    sell_price = df_continuous.loc[date, 'close']
-                    capital += trade['shares'] * sell_price
+                    sell_price = trade['price']
+                    sell_size = trade['size']
+                    commission = trade['commission']
+                    current_cost = sell_size * sell_price - commission
+                    total_cost -= current_cost
+                    capital += current_cost
+                    total_holdings -= sell_size
+                    # 如果全部卖出，重置持仓成本
+                    if total_holdings <= 0:
+                        adjusted_cost = 0.0
+                        total_cost = 0.0
+                        total_holdings = 0
+                    else:
+                        adjusted_cost = total_cost / total_holdings
 
         # 保存当日持仓量
         holdings_history.append(total_holdings)
+        adjusted_cost_history.append(adjusted_cost)
 
-        # 计算总资产（现金+持仓市值），这样算会忽略手续费和滑点，实际情况中会有这些成本，舍弃
+        # 计算总资产（现金+持仓市值）
         if date in df_continuous.index.dropna():
             current_price = df_continuous.loc[date, 'close']
             holdings_value = total_holdings * current_price
@@ -131,17 +151,18 @@ def calculate_holdings(df_continuous, valid_trades, initial_capital=1000000):
     # 添加持仓量和总资产数据到DataFrame
     holdings_data['holdings'] = holdings_history
     holdings_data['total_assets'] = asset_history
+    holdings_data['adjusted_cost'] = adjusted_cost_history
 
     return holdings_data
 
 
-def create_trading_chart(df_continuous, df, valid_signals, valid_trades, holdings_data, valid_assets, initial_capital):
+def create_trading_chart(chart_title_prefix, df, valid_signals, valid_trades, holdings_data, initial_capital):
     """
     创建包含K线、信号和交易记录的图表
 
     参数:
-        df_continuous: 连续日期的股票数据
-        df: 原始股票数据
+        chart_title_prefix: 图表标题前缀
+        df: 原始股票数据处理后得到连续日期的股票数据
         valid_signals: 有效的信号记录
         valid_trades: 有效的交易记录
         holdings_data: 持仓量和总资产数据
@@ -150,18 +171,20 @@ def create_trading_chart(df_continuous, df, valid_signals, valid_trades, holding
     返回:
         Plotly图表对象
     """
-    # 创建四个垂直排列的图表
+    # 创建五个垂直排列的图表
     fig = make_subplots(
-        rows=4, cols=1,
+        rows=6, cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.05,
+        vertical_spacing=0.07,
         subplot_titles=(
             'K线图与交易信号',
+            '全景K图', # 全景K线视图，用于时间范围选择，方便其他图联动
             '成交量',
             '持仓量变化',
-            '总资产变化'
+            '总资产变化',
+            '持仓成本'
         ),
-        row_heights=[0.4, 0.15, 0.2, 0.25]
+        row_heights=[0.35, 0.1, 0.15, 0.15, 0.15, 0.15]
     )
 
     # 1. 添加K线图
@@ -179,19 +202,34 @@ def create_trading_chart(df_continuous, df, valid_signals, valid_trades, holding
         row=1, col=1
     )
 
-    # 2. 添加成交量柱状图
+    # 2. 添加全景视图占位图（第二行）- 不显示实际数据
+    fig.add_trace(
+        go.Bar(
+            x=df.index,
+            y=df['volume'],
+            name='全景K图',
+            marker=dict(
+                color=['red' if close >= open else 'green' for open, close in zip(df['open'], df['close'])]
+            ),
+        ),
+        row=2, col=1
+    )
+
+    # 3. 添加成交量柱状图
     fig.add_trace(
         go.Bar(
             x=df.index,
             y=df['volume'],
             name='成交量',
-            marker_color=['red' if close >= open else 'green' for open, close in zip(df['open'], df['close'])],
-            opacity=0.7
+            marker=dict(
+                color=['red' if close >= open else 'green' for open, close in zip(df['open'], df['close'])],
+                opacity=0.8  # 增加不透明度，使颜色更鲜艳
+            ),
         ),
-        row=2, col=1
+        row=3, col=1
     )
 
-    # 3. 添加持仓量变化曲线
+    # 4. 添加持仓量变化曲线
     fig.add_trace(
         go.Scatter(
             x=holdings_data.index,
@@ -200,19 +238,20 @@ def create_trading_chart(df_continuous, df, valid_signals, valid_trades, holding
             name='持仓量',
             line=dict(color='blue', width=2)
         ),
-        row=3, col=1
+        row=4, col=1
     )
 
-    # 4. 添加总资产变化曲线和初始资金参考线
+    # 5. 添加总资产变化曲线和初始资金参考线
     fig.add_trace(
         go.Scatter(
             x=holdings_data.index,
             y=holdings_data['total_assets'],
             mode='lines',
             name='总资产',
-            line=dict(color='purple', width=2)
+            line=dict(color='purple', width=2),
+            connectgaps=True
         ),
-        row=4, col=1
+        row=5, col=1
     )
 
     # 添加初始资金参考线
@@ -222,10 +261,22 @@ def create_trading_chart(df_continuous, df, valid_signals, valid_trades, holding
         line_color="gray",
         annotation_text=f"初始资金: {initial_capital}",
         annotation_position="bottom right",
-        row=4, col=1
+        row=5, col=1
     )
 
-    # 5. 添加信号点标记
+    # 6. 添加持仓成本变化曲线
+    fig.add_trace(
+        go.Scatter(
+            x=holdings_data.index,
+            y=holdings_data['adjusted_cost'],
+            mode='lines',
+            name='持仓成本',
+            line=dict(color='orange', width=2)
+        ),
+        row=6, col=1
+    )
+
+    # 6. 添加信号点标记
     # 首先检查valid_signals是否有效
     if valid_signals is not None and not valid_signals.empty and all(col in valid_signals.columns for col in ['date', 'signal_type', 'signal_description']):
         # 强买入信号（绿色，圆形）
@@ -330,9 +381,9 @@ def create_trading_chart(df_continuous, df, valid_signals, valid_trades, holding
     else:
         logger.warning("警告：信号记录为空或不包含必要的列，无法添加信号标记")
 
-    # 6. 添加实际交易点标记
+    # 7. 添加实际交易点标记
     # 首先检查valid_trades是否有效
-    if valid_trades is not None and not valid_trades.empty and all(col in valid_trades.columns for col in ['date', 'action', 'shares']):
+    if valid_trades is not None and not valid_trades.empty and all(col in valid_trades.columns for col in ['date', 'action', 'size']):
         # 买入操作（B，上三角形，绿色，K线下方）
         buy_trades = valid_trades[valid_trades['action'] == 'B']
         if not buy_trades.empty:
@@ -353,7 +404,7 @@ def create_trading_chart(df_continuous, df, valid_signals, valid_trades, holding
                     texttemplate='%{text}',
                     textfont=dict(family="SimHei, Arial", size=12, color="darkgreen", weight="bold"),
                     hovertemplate='日期: %{x}<br>操作: 买入(B)<br>数量: %{customdata[0]}股<br>价格: %{y:.2f}<extra></extra>',
-                    customdata=buy_trades[['shares']].values
+                    customdata=buy_trades[['size']].values
                 ), row=1, col=1
             )
 
@@ -377,23 +428,23 @@ def create_trading_chart(df_continuous, df, valid_signals, valid_trades, holding
                     texttemplate='%{text}',
                     textfont=dict(family="SimHei, Arial", size=12, color="darkred", weight="bold"),
                     hovertemplate='日期: %{x}<br>操作: 卖出(S)<br>数量: %{customdata[0]}股<br>价格: %{y:.2f}<extra></extra>',
-                    customdata=sell_trades[['shares']].values
+                    customdata=sell_trades[['size']].values
                 ), row=1, col=1
             )
     else:
         logger.warning("警告：交易记录为空或不包含必要的列，无法添加交易标记")
 
-    # 7. 设置图表布局
+    # 8. 设置图表布局
     fig.update_layout(
         title=dict(
-            text=f'股票交易策略回测分析',
+            text=f'{chart_title_prefix} - 股票交易策略回测分析',
             font=dict(family="SimHei, Arial", size=20, color="black", weight="bold"),
             x=0.5,
             y=0.99,
             xanchor='center',
             yanchor='top'  # 设置yanchor为top，确保y值从标题顶部开始计算
         ),
-        height=1200,
+        height=2000,
         width=1600,
         margin=dict(l=120, r=80, t=120, b=80),
         legend=dict(
@@ -428,6 +479,18 @@ def create_trading_chart(df_continuous, df, valid_signals, valid_trades, holding
         row=1, col=1
     )
 
+    # 全景视图Y轴 - 隐藏Y轴标签和刻度
+    fig.update_yaxes(
+        title_text="全景K图",
+        showgrid=True,
+        showticklabels=False,  # 隐藏刻度标签
+        showline=False,  # 隐藏轴线
+        gridwidth=1,
+        gridcolor='LightGray',
+        tickfont=dict(family="SimHei, Arial", size=12),
+        row=2, col=1
+    )
+
     # 成交量Y轴
     fig.update_yaxes(
         title_text="成交量",
@@ -435,7 +498,7 @@ def create_trading_chart(df_continuous, df, valid_signals, valid_trades, holding
         gridwidth=1,
         gridcolor='LightGray',
         tickfont=dict(family="SimHei, Arial", size=12),
-        row=2, col=1
+        row=3, col=1
     )
 
     # 持仓量Y轴
@@ -445,17 +508,27 @@ def create_trading_chart(df_continuous, df, valid_signals, valid_trades, holding
         gridwidth=1,
         gridcolor='LightGray',
         tickfont=dict(family="SimHei, Arial", size=12),
-        row=3, col=1
+        row=4, col=1
     )
 
     # 总资产Y轴
     fig.update_yaxes(
-        title_text="总资产(元)",
+        title_text="总资产",
         showgrid=True,
         gridwidth=1,
         gridcolor='LightGray',
         tickfont=dict(family="SimHei, Arial", size=12),
-        row=4, col=1
+        row=5, col=1
+    )
+
+    # 添加持仓成本Y轴
+    fig.update_yaxes(
+        title_text="持仓成本",
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='LightGray',
+        tickfont=dict(family="SimHei, Arial", size=12),
+        row=6, col=1
     )
 
     return fig
@@ -493,8 +566,6 @@ def save_and_show_chart(fig, output_dir=None):
 
 
 def plotly_draw(kline_csv_path, strategy, initial_capital):
-    asset_record_manager = strategy.asset_record_manager
-    asset_records_df = asset_record_manager.transform_to_dataframe()
     signal_record_manager = strategy.indicator.signal_record_manager
     signals_df = signal_record_manager.transform_to_dataframe()
     trade_record_manager = strategy.trade_record_manager
@@ -510,19 +581,14 @@ def plotly_draw(kline_csv_path, strategy, initial_capital):
         signals_df = get_sample_signal_records()
     if trades_df is None:
         trades_df = get_sample_trade_records()
-    if asset_records_df is None:
-        asset_records_df = get_sample_asset_records()
     logger.debug(f"买/卖信号记录：")
     logger.debug(f"\n{signals_df}")
     logger.debug(f"交易记录：")
     logger.debug(f"\n{trades_df}")
-    logger.debug(f"资产记录：")
-    logger.debug(f"\n{asset_records_df}")
 
     # 4. 筛选有效的日期
     valid_signals = filter_valid_dates(df, signals_df)
     valid_trades = filter_valid_dates(df, trades_df)
-    valid_assets = filter_valid_dates(df, asset_records_df)
 
     # 5. 计算持仓量和资产变化
     holdings_data = calculate_holdings(df_continuous, valid_trades, initial_capital)
@@ -537,19 +603,7 @@ def plotly_draw(kline_csv_path, strategy, initial_capital):
         stock_name = parts[1]
         stock_info = f"{stock_code} {stock_name}"
 
-    fig = create_trading_chart(df_continuous, df, valid_signals, valid_trades, holdings_data, valid_assets, initial_capital)
-    if stock_info:
-        current_title = fig.layout.title.text
-        fig.update_layout(
-            title=dict(
-                text=f'{stock_info} - {current_title}',
-                font=dict(family="SimHei, Arial", size=20, color="black", weight="bold"),
-                x=0.5,
-                y=0.99,
-                xanchor='center',
-                yanchor='top'
-            )
-        )
+    fig = create_trading_chart(stock_info, df_continuous, valid_signals, valid_trades, holdings_data, initial_capital)
     # 7. 保存和显示图表
     relative_path = str(kline_csv_path).replace(str(stock_data_root) + '/', '')
     html_file_path = html_root /relative_path.rsplit('.', 1)[0]
